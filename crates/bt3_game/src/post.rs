@@ -17,7 +17,8 @@ pub enum PostBuf {
 }
 
 impl PostBuf {
-    /// Width and height in pixels.
+    /// Width and height in the console's pixels (the buffers themselves are `--internal-scale` times this; the ops'
+    /// positions and texels stay in these units).
     pub fn size(self) -> [f32; 2] {
         match self {
             PostBuf::Frame => [512.0, 448.0],

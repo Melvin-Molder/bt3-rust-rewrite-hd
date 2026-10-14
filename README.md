@@ -59,6 +59,7 @@ scaled to the window, at 4:3 as a television shows it.
 | `--aspect tv \| pixel \| stretch` | 4:3 (the default), square pixels, or fill the window |
 | `--filter linear \| nearest` | Smooth (the default) or sharp scaling |
 | `--scale N` | The window's starting size, 1 to 8 (default 2) |
+| `--internal-scale N` | Optional enhancement, off by default: draw at N times 512 x 448 (2 to 4); 1 is the console's resolution |
 | `--title`, `--menu` | Skip to the title screen or the main menu |
 | `--battle` | Go straight to a battle (`--stage N`, `--mode N`, `--split` for 2P) |
 | `--memcard DIR` | Use another save folder |

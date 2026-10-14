@@ -682,11 +682,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .and_then(|v| v.to_string_lossy().parse::<u32>().ok())
                 .filter(|v| (1..=8).contains(v))
                 .ok_or("--scale requires a window size of 1 to 8")?;
+        } else if argument == "--internal-scale" {
+            // An enhancement, off by default: the passes draw at N times the console's 512 x 448 (crate::display).
+            display.internal_scale = arguments
+                .next()
+                .and_then(|v| display::DisplaySettings::parse_internal_scale(&v.to_string_lossy()))
+                .ok_or("--internal-scale requires 1 to 4")?;
         } else if argument == "--fps" {
             log_fps = true;
         } else if argument == "--shot" {
-            // A debugging aid: the frame (512 x 448) saved as a PNG after `--shot-at` updates, then the program
-            // ends.
+            // A debugging aid: the frame (512 x 448, times `--internal-scale`) saved as a PNG after `--shot-at`
+            // updates, then the program ends.
             shot = Some(PathBuf::from(
                 arguments.next().ok_or("--shot requires a file")?,
             ));

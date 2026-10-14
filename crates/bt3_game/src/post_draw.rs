@@ -160,21 +160,20 @@ pub fn add_to(app: &mut App) {
         .add_systems(Startup, spawn_post_cameras);
 }
 
-fn spawn_post_cameras(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
-    let work: [Handle<Image>; 2] = std::array::from_fn(|_| {
-        images.add(Image::new_target_texture(
-            256,
-            224,
-            TextureFormat::Rgba8UnormSrgb,
-            None,
-        ))
-    });
-    let wide = images.add(Image::new_target_texture(
-        512,
-        224,
-        TextureFormat::Rgba8UnormSrgb,
-        None,
-    ));
+/// The buffers are `--internal-scale` times the console's, like the frame; the cameras show them in the console's
+/// pixels, so the ops' positions and texels stay the console's.
+fn spawn_post_cameras(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    display: Res<crate::display::DisplaySettings>,
+) {
+    let target = |[w, h]: [f32; 2]| {
+        let (w, h) = display.target_size(w as u32, h as u32);
+        Image::new_target_texture(w, h, TextureFormat::Rgba8UnormSrgb, None)
+    };
+    let work: [Handle<Image>; 2] =
+        std::array::from_fn(|i| images.add(target(PostBuf::Work(i).size())));
+    let wide = images.add(target(PostBuf::Wide.size()));
     for chain in 0..3 {
         for i in 0..POST_CAMERAS[chain] {
             commands.spawn((
@@ -185,6 +184,7 @@ fn spawn_post_cameras(mut commands: Commands, mut images: ResMut<Assets<Image>>)
                     clear_color: ClearColorConfig::None,
                     ..default()
                 },
+                display.projection(),
                 RenderTarget::from(work[0].clone()),
                 RenderLayers::layer(POST_LAYER_BASE[chain] + i),
                 PostCamera(chain, i, Some(work[0].id())),
@@ -231,6 +231,7 @@ pub fn sync_post(
     plane: Res<crate::model_draw::DepthPlane>,
     ids: Res<crate::model_draw::IdPlane>,
     mut images: ResMut<Assets<Image>>,
+    display: Res<crate::display::DisplaySettings>,
 ) {
     if !game.is_changed() {
         return;
@@ -305,17 +306,7 @@ pub fn sync_post(
                                 448.0 / th,
                                 0.0,
                             ),
-                            region: {
-                                let [sw, sh] = op.source.size();
-                                op.region.map_or(Vec4::new(0.0, 0.0, sw, sh), |r| {
-                                    Vec4::new(
-                                        f32::from(r[0]),
-                                        f32::from(r[1]),
-                                        f32::from(r[2]),
-                                        f32::from(r[3]),
-                                    )
-                                })
-                            },
+                            region: region_texels(op, display.internal_scale),
                             blend: op.blend || mask.is_some(),
                             add: op.add,
                             order: k as u16,
@@ -332,6 +323,21 @@ pub fn sync_post(
             }
         }
     }
+}
+
+/// The source texels an op reads (x0, y0, x1, y1), in the buffer's pixels: the region clamp's console texels times
+/// `--internal-scale`.
+fn region_texels(op: &PostOp, scale: u32) -> Vec4 {
+    let [sw, sh] = op.source.size();
+    let r = op.region.map_or(Vec4::new(0.0, 0.0, sw, sh), |r| {
+        Vec4::new(
+            f32::from(r[0]),
+            f32::from(r[1]),
+            f32::from(r[2]),
+            f32::from(r[3]),
+        )
+    });
+    r * scale as f32
 }
 
 /// A 256 x 1 table of alphas by byte value.
@@ -406,5 +412,22 @@ mod tests {
         let g = groups(&ops);
         assert_eq!(g.iter().map(|g| g.len()).collect::<Vec<_>>(), [1, 2, 1]);
         assert!(groups(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_region_clamp_scales_with_the_buffers() {
+        let mut op = PostOp::sprite(
+            PostBuf::Frame,
+            PostBuf::Work(0),
+            false,
+            [0.0; 4],
+            [0.0; 4],
+            [0x80; 4],
+        );
+        assert_eq!(region_texels(&op, 1), Vec4::new(0.0, 0.0, 512.0, 448.0));
+        assert_eq!(region_texels(&op, 3), Vec4::new(0.0, 0.0, 1536.0, 1344.0));
+        op.region = Some([0, 0, 128, 112]);
+        assert_eq!(region_texels(&op, 1), Vec4::new(0.0, 0.0, 128.0, 112.0));
+        assert_eq!(region_texels(&op, 2), Vec4::new(0.0, 0.0, 256.0, 224.0));
     }
 }

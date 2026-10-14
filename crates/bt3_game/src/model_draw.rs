@@ -401,6 +401,9 @@ impl Material2d for GsIdMaterial {
 pub struct GsOutlineMaterial {
     #[texture(0)]
     plane: Handle<Image>,
+    /// x: the plane's pixels per console pixel (`--internal-scale`), so the edges keep their console width.
+    #[uniform(1)]
+    params: Vec4,
 }
 
 impl Material2d for GsOutlineMaterial {
@@ -492,10 +495,13 @@ fn spawn_id_plane(
     mut meshes: ResMut<Assets<Mesh>>,
     mut cluts: ResMut<Assets<GsDepthClutMaterial>>,
     mut outlines: ResMut<Assets<GsOutlineMaterial>>,
+    display: Res<crate::display::DisplaySettings>,
 ) {
+    // At the frame's pixels: the key and the outline read it pixel for pixel.
+    let (width, height) = display.target_size(SCREEN_WIDTH, SCREEN_HEIGHT);
     let image = images.add(Image::new_target_texture(
-        SCREEN_WIDTH,
-        SCREEN_HEIGHT,
+        width,
+        height,
         TextureFormat::Rgba8Unorm,
         None,
     ));
@@ -507,6 +513,7 @@ fn spawn_id_plane(
             clear_color: ClearColorConfig::Custom(Color::WHITE),
             ..default()
         },
+        display.projection(),
         RenderTarget::from(image.clone()),
         RenderLayers::layer(ID_LAYER),
     ));
@@ -530,6 +537,7 @@ fn spawn_id_plane(
     });
     let outline = outlines.add(GsOutlineMaterial {
         plane: image.clone(),
+        params: Vec4::new(display.internal_scale as f32, 0.0, 0.0, 0.0),
     });
     let quad = meshes.add(Rectangle::new(SCREEN_WIDTH as f32, SCREEN_HEIGHT as f32));
     commands.spawn((
@@ -598,10 +606,13 @@ fn spawn_depth_plane(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<GsDepthClutMaterial>>,
+    display: Res<crate::display::DisplaySettings>,
 ) {
+    // At the frame's pixels: the depth tint and the masked post ops read it pixel for pixel.
+    let (width, height) = display.target_size(SCREEN_WIDTH, SCREEN_HEIGHT);
     let image = images.add(Image::new_target_texture(
-        SCREEN_WIDTH,
-        SCREEN_HEIGHT,
+        width,
+        height,
         TextureFormat::Rgba8Unorm,
         None,
     ));
@@ -624,6 +635,7 @@ fn spawn_depth_plane(
             clear_color: ClearColorConfig::Custom(Color::WHITE),
             ..default()
         },
+        display.projection(),
         RenderTarget::from(image.clone()),
         RenderLayers::layer(DEPTH_LAYER),
     ));
@@ -1210,7 +1222,7 @@ const HUD_LAYER: usize = 3;
 /// The window's layer: the finished frame, scaled.
 const WINDOW_LAYER: usize = 63;
 
-/// The finished 512 x 448 frame, before it is scaled to the window.
+/// The finished 512 x 448 frame (times `--internal-scale`), before it is scaled to the window.
 #[derive(Resource)]
 pub struct OutputFrame(pub Handle<Image>);
 
@@ -1246,16 +1258,24 @@ fn spawn_cameras(
     mut assets: ResMut<Assets<Image>>,
     display: Res<crate::display::DisplaySettings>,
 ) {
+    // Every target is `--internal-scale` times the console's; every camera shows the console's 512 x 448 in it.
+    let (width, height) = display.target_size(SCREEN_WIDTH, SCREEN_HEIGHT);
+    let frame_size = Vec2::new(SCREEN_WIDTH as f32, SCREEN_HEIGHT as f32);
     let images: [Handle<Image>; 2] = std::array::from_fn(|_| {
         assets.add(Image::new_target_texture(
-            SCREEN_WIDTH,
-            SCREEN_HEIGHT,
+            width,
+            height,
             TextureFormat::Rgba8UnormSrgb,
             None,
         ))
     });
     // The stage (and the depth tint), then StgFx_DrawPre's post chain, then the fighters' camera.
-    commands.spawn((Camera2d, SceneCamera, RenderTarget::from(images[0].clone())));
+    commands.spawn((
+        Camera2d,
+        display.projection(),
+        SceneCamera,
+        RenderTarget::from(images[0].clone()),
+    ));
     commands.spawn((
         Camera2d,
         Camera {
@@ -1263,6 +1283,7 @@ fn spawn_cameras(
             clear_color: ClearColorConfig::None,
             ..default()
         },
+        display.projection(),
         SceneCamera,
         RenderTarget::from(images[0].clone()),
         RenderLayers::layer(FIGHTER_LAYER),
@@ -1275,6 +1296,7 @@ fn spawn_cameras(
             clear_color: ClearColorConfig::None,
             ..default()
         },
+        display.projection(),
         SceneCamera,
         RenderTarget::from(images[0].clone()),
         RenderLayers::layer(EFFECT_LAYER),
@@ -1287,17 +1309,13 @@ fn spawn_cameras(
             clear_color: ClearColorConfig::None,
             ..default()
         },
+        display.projection(),
         SceneCamera,
         RenderTarget::from(images[0].clone()),
         RenderLayers::layer(HUD_LAYER),
     ));
     // The frame as the console outputs it (the buffers and the screens' quads), at 512 x 448.
-    let mut output = Image::new_target_texture(
-        SCREEN_WIDTH,
-        SCREEN_HEIGHT,
-        TextureFormat::Rgba8UnormSrgb,
-        None,
-    );
+    let mut output = Image::new_target_texture(width, height, TextureFormat::Rgba8UnormSrgb, None);
     output.sampler = display.sampler();
     let output = assets.add(output);
     commands.spawn((
@@ -1306,6 +1324,7 @@ fn spawn_cameras(
             order: 70,
             ..default()
         },
+        display.projection(),
         RenderTarget::from(output.clone()),
         RenderLayers::layer(DISPLAY_LAYER),
     ));
@@ -1333,13 +1352,21 @@ fn spawn_cameras(
     ));
     commands.insert_resource(OutputFrame(output));
     commands.spawn((
-        Sprite::from_image(images[0].clone()),
+        Sprite {
+            image: images[0].clone(),
+            custom_size: Some(frame_size),
+            ..default()
+        },
         Transform::from_xyz(0.0, 0.0, -990.0),
         RenderLayers::layer(DISPLAY_LAYER),
         LiveFrame,
     ));
     commands.spawn((
-        Sprite::from_image(images[1].clone()),
+        Sprite {
+            image: images[1].clone(),
+            custom_size: Some(frame_size),
+            ..default()
+        },
         Transform::from_xyz(0.0, 0.0, -980.0),
         RenderLayers::layer(DISPLAY_LAYER),
         Visibility::Hidden,
@@ -1691,7 +1718,8 @@ pub fn sync_hud(
     }
 }
 
-/// The gauge layer: one full-frame quad over a 512 x 448 image rewritten each frame.
+/// The gauge layer: one full-frame quad over a 512 x 448 image rewritten each frame. The CPU draws it at the
+/// console's pixels, so at a higher `--internal-scale` it is stretched over the frame (point sampled).
 fn sync_hud_layer(
     commands: &mut Commands,
     pixels: Option<&[u8]>,

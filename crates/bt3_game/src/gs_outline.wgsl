@@ -6,11 +6,15 @@
 // pixel to the left, which reads the next texel on, leaves anything: a pixel whose right neighbour's `k` differs
 // is an edge. The edges are drawn into the frame's alpha (TEXA: 0 where nothing is left) three times: two pixels
 // up and in place at 0x30, then one up at 0x80; a grey 0x64 is then taken from the frame by that alpha
-// (ALPHA 0x52, `Cd - Cs * Ad`), which the blend does here.
+// (ALPHA 0x52, `Cd - Cs * Ad`), which the blend does here. At `--internal-scale` N the plane has N pixels per
+// console pixel: a neighbour is N pixels on and a shifted copy N rows, each row of the console's taken as the N
+// rows it covers, so the edges keep their console width and height.
 
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var plane: texture_2d<f32>;
+// x: the plane's pixels per console pixel.
+@group(#{MATERIAL_BIND_GROUP}) @binding(1) var<uniform> params: vec4<f32>;
 
 fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     let low = c / 12.92;
@@ -30,17 +34,28 @@ fn k(p: vec2<i32>) -> i32 {
     return id & 31;
 }
 
-fn edge(p: vec2<i32>) -> bool {
-    return k(p) != k(p + vec2<i32>(1, 0));
+fn edge(p: vec2<i32>, n: i32) -> bool {
+    return k(p) != k(p + vec2<i32>(n, 0));
+}
+
+// An edge in the console row `row` rows down: any of its n rows.
+fn edge_row(p: vec2<i32>, row: i32, n: i32) -> bool {
+    for (var j = 0; j < n; j++) {
+        if edge(p + vec2<i32>(0, row * n + j), n) {
+            return true;
+        }
+    }
+    return false;
 }
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let p = vec2<i32>(in.position.xy);
+    let n = i32(params.x);
     var alpha = 0.0;
-    if edge(p + vec2<i32>(0, 1)) {
+    if edge_row(p, 1, n) {
         alpha = 128.0;
-    } else if edge(p + vec2<i32>(0, 2)) || edge(p) {
+    } else if edge_row(p, 2, n) || edge_row(p, 0, n) {
         alpha = 48.0;
     }
     return vec4<f32>(srgb_to_linear(vec3<f32>(100.0 / 255.0)), alpha / 128.0);

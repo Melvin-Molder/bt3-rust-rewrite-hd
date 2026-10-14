@@ -1,8 +1,11 @@
 //! How the finished frame reaches the window. Every pass draws into the console's 512 x 448 frame, as on the PS2;
-//! only the finished frame is scaled to the window, the way a television scales the console's output. The frame
-//! is never drawn at a higher resolution.
+//! only the finished frame is scaled to the window, the way a television scales the console's output.
+//!
+//! `--internal-scale N` (2 to 4, off by default) is an enhancement the console does not have: every frame buffer,
+//! work buffer and plane is N times as wide and high, and the cameras show the same 512 x 448 space in them, so
+//! the game's coordinates stay the console's and only the pixels multiply. At 1 nothing changes.
 
-use bevy::camera::ScalingMode;
+use bevy::camera::{OrthographicProjection, Projection, ScalingMode};
 use bevy::image::ImageSampler;
 use bevy::prelude::Resource;
 use bevy::window::{MonitorSelection, WindowMode};
@@ -37,6 +40,8 @@ pub struct DisplaySettings {
     /// The window's size at start, in multiples of the frame shown at the aspect.
     pub scale: u32,
     pub fullscreen: bool,
+    /// `--internal-scale`: the passes' pixels per console pixel (1 = the console's resolution).
+    pub internal_scale: u32,
 }
 
 impl Default for DisplaySettings {
@@ -46,6 +51,7 @@ impl Default for DisplaySettings {
             filter: Filter::Linear,
             scale: 2,
             fullscreen: false,
+            internal_scale: 1,
         }
     }
 }
@@ -110,6 +116,27 @@ impl DisplaySettings {
         }
     }
 
+    /// `--internal-scale`'s value: 1 to `MAX_INTERNAL_SCALE`.
+    pub fn parse_internal_scale(value: &str) -> Option<u32> {
+        value
+            .parse()
+            .ok()
+            .filter(|n| (1..=MAX_INTERNAL_SCALE).contains(n))
+    }
+
+    /// A render target of `width` x `height` console pixels, in the passes' pixels.
+    pub fn target_size(&self, width: u32, height: u32) -> (u32, u32) {
+        (width * self.internal_scale, height * self.internal_scale)
+    }
+
+    /// A camera drawing into a scaled target: it shows as many world units as the target has console pixels.
+    pub fn projection(&self) -> Projection {
+        Projection::Orthographic(OrthographicProjection {
+            scale: 1.0 / self.internal_scale as f32,
+            ..OrthographicProjection::default_2d()
+        })
+    }
+
     /// The finished frame's sampler.
     pub fn sampler(&self) -> ImageSampler {
         match self.filter {
@@ -118,6 +145,9 @@ impl DisplaySettings {
         }
     }
 }
+
+/// The largest `--internal-scale`.
+pub const MAX_INTERNAL_SCALE: u32 = 4;
 
 /// F11: the window between full screen (borderless, on its monitor) and a window.
 pub fn toggle_fullscreen(mode: WindowMode) -> WindowMode {
@@ -162,6 +192,35 @@ mod tests {
                 height: 448.0
             }
         ));
+    }
+
+    #[test]
+    fn the_internal_scale_multiplies_the_pixels_but_not_the_space() {
+        assert_eq!(DisplaySettings::parse_internal_scale("1"), Some(1));
+        assert_eq!(DisplaySettings::parse_internal_scale("4"), Some(4));
+        assert_eq!(DisplaySettings::parse_internal_scale("0"), None);
+        assert_eq!(DisplaySettings::parse_internal_scale("5"), None);
+        for n in 1..=MAX_INTERNAL_SCALE {
+            let d = DisplaySettings {
+                internal_scale: n,
+                ..DisplaySettings::default()
+            };
+            let (w, h) = d.target_size(SCREEN_WIDTH, SCREEN_HEIGHT);
+            assert_eq!((w, h), (512 * n, 448 * n));
+            // The camera shows 512 x 448 world units in it, whatever the scale.
+            let Projection::Orthographic(mut ortho) = d.projection() else {
+                panic!("an orthographic camera");
+            };
+            bevy::camera::CameraProjection::update(&mut ortho, w as f32, h as f32);
+            assert!((ortho.area.width() - 512.0).abs() < 1e-3);
+            assert!((ortho.area.height() - 448.0).abs() < 1e-3);
+        }
+        // At 1, the camera is Camera2d's own.
+        let Projection::Orthographic(native) = DisplaySettings::default().projection() else {
+            panic!("an orthographic camera");
+        };
+        assert_eq!(native.scale, OrthographicProjection::default_2d().scale);
+        assert_eq!(DisplaySettings::default().target_size(256, 224), (256, 224));
     }
 
     #[test]
