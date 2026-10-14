@@ -1,11 +1,57 @@
-# BT3 Recomp
+# BT3 Recomp HD
 
-An independent reimplementation of **Dragon Ball Z: Budokai Tenkaichi 3** for the PlayStation 2 (USA release,
-SLUS-21678), written in Rust with [Bevy](https://bevyengine.org/). It runs on a PC and reads everything it needs
-(models, stages, textures, sounds, scripts) from your own disc image as it runs.
+The enhanced edition of [BT3 Recomp](https://github.com/Melvin-Molder/bt3-rust-rewrite), an independent
+reimplementation of **Dragon Ball Z: Budokai Tenkaichi 3** for the PlayStation 2 (USA release, SLUS-21678),
+written in Rust with [Bevy](https://bevyengine.org/). It runs on a PC and reads everything it needs (models,
+stages, textures, sounds, scripts) from your own disc image as it runs.
 
-This repository contains **no game data, no copy of the game and no decompiled code**. To run it you need your
-own disc image of that release.
+This edition adds modern options on top of the faithful port: **high internal resolution** and **HD texture
+packs**, alongside the full-screen scaling and keyboard and mouse controls. Every one of them is optional. With
+no options the game is drawn exactly as the console draws it, pixel for pixel the same as the original project.
+
+This repository contains **no game data, no copy of the game, no texture pack and no decompiled code**. To run it
+you need your own disc image of that release.
+
+## What's new in this edition
+
+| Feature | Option | What it does |
+|---|---|---|
+| High internal resolution | `--internal-scale 2..4` | Draws every pass at 2 to 4 times the PS2's 512 x 448 (up to 2048 x 1792). Polygons, effects, post effects and outlines are drawn at the higher resolution while the game's coordinates stay the console's, so nothing moves or changes size. |
+| HD texture packs | `--textures DIR` | Loads replacement textures made for the game under PCSX2 (DDS or PNG), so community packs such as Sal9im's AI-upscaled pack work as they are. Each texture is named as PCSX2 names it and swapped in when it is uploaded. |
+| Full screen and window scaling | `--fullscreen`, `--aspect`, `--filter`, `--scale`, F11 | The finished frame scaled to any window or screen at 4:3, square pixels or stretched, smooth or sharp. |
+| Keyboard and mouse | (always on) | Dragon Ball: Sparking! ZERO's PC layout. A gamepad works as the PS2 pad. |
+
+The first two are this edition's own; the others come from the original project. The faithful 512 x 448 output
+stays the default.
+
+### Recommended setup
+
+Full screen at three times the resolution, with an HD pack:
+
+```
+cargo run --release -p bt3-game -- --fullscreen --internal-scale 3 --textures "textures/SLUS-21678"
+```
+
+| Screen | `--internal-scale` |
+|---|---|
+| 1080p | 3 (drawn at 1344 lines, scaled down: a little extra smoothing) |
+| 1440p | 3 |
+| 4K | 4 |
+
+If it stutters, use one step lower.
+
+### Texture packs
+
+1. Download a PCSX2 pack for the USA release, for example
+   [Sal9im's AI Upscaled Texture Pack (SLUS-21678)](https://gbatemp.net/threads/dragon-ball-z-budokai-tenkaichi-3-slus-21678-ai-upscaled-texture-pack.659662/).
+2. Extract it anywhere, for example to `textures/` at the top of the repository (ignored by git).
+3. Pass its `SLUS-21678` folder with `--textures`. Its `replacements` folder is read, at any depth.
+
+A pack's optional extras (such as alternative button prompts or fonts) work as PCSX2 uses them: copy them into
+`replacements`. With Sal9im's pack about nine in ten of the textures a battle uses are replaced; textures
+smaller than one GS block (16 x 16 at 8 bits, 32 x 16 at 4 bits) are not, as PCSX2 names those another way.
+Files are read the first time a texture is used, so loading a battle takes a moment longer.
+`BT3_TEX_LOG=1` prints each texture looked up, found or missing, with the file name it would need.
 
 ## Status
 
