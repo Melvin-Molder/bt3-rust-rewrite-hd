@@ -310,6 +310,7 @@ mod tests {
             width,
             height: pixels.len() as u32 / width,
             pixels: pixels.concat(),
+            pack: None,
         }
     }
 

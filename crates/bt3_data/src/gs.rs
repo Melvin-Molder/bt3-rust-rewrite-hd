@@ -1,6 +1,7 @@
 use std::io;
 
 use crate::tex::TextureEntry;
+use crate::texpack::{PackAlpha, PackName, TextureKey};
 
 const GS_PAGE_BYTES: usize = 8192;
 const PSMCT32_PAGE_WIDTH: usize = 64;
@@ -17,6 +18,8 @@ pub struct RgbaTexture {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<u8>,
+    /// The name a PCSX2 texture pack gives it (`crate::texpack`), for a paletted texture decoded from its upload.
+    pub pack: Option<PackName>,
 }
 
 pub fn decode_sprite_texture(entry: &TextureEntry<'_>) -> io::Result<RgbaTexture> {
@@ -32,6 +35,8 @@ pub struct IndexedTexture {
     pub height: u32,
     pub indices: Vec<u8>,
     pub palette: Vec<[u8; 4]>,
+    /// What its pack name takes from its pixels (`crate::texpack`).
+    pub key: Option<TextureKey>,
 }
 
 impl IndexedTexture {
@@ -41,6 +46,7 @@ impl IndexedTexture {
             width: self.width as usize,
             height: self.height as usize,
             indices: self.indices.clone(),
+            key: self.key,
         }
         .with_palette(palette)
     }
@@ -54,6 +60,7 @@ pub fn decode_indexed_texture(entry: &TextureEntry<'_>) -> io::Result<IndexedTex
         height: texels.height as u32,
         indices: texels.indices,
         palette,
+        key: texels.key,
     })
 }
 
@@ -103,6 +110,9 @@ pub fn decode_sprite_texture_raw(
             .iter()
             .flat_map(|&i| palette[usize::from(i)])
             .collect(),
+        pack: texels
+            .key
+            .map(|key| PackName::new(&key, &palette, PackAlpha::Raw)),
     })
 }
 
@@ -293,6 +303,7 @@ struct TexelIndices {
     width: usize,
     height: usize,
     indices: Vec<u8>,
+    key: Option<TextureKey>,
 }
 
 impl TexelIndices {
@@ -311,6 +322,9 @@ impl TexelIndices {
             width: self.width as u32,
             height: self.height as u32,
             pixels,
+            pack: self
+                .key
+                .map(|key| PackName::new(&key, palette, PackAlpha::Doubled)),
         }
     }
 }
@@ -407,10 +421,58 @@ fn decode_texel_indices(entry: &TextureEntry<'_>) -> io::Result<TexelIndices> {
             });
         }
     }
+    let key = texture_key(
+        &local_memory,
+        texture_psm,
+        &entry.texture_register,
+        target_pages_wide,
+        &indices,
+    );
     Ok(TexelIndices {
         width,
         height,
         indices,
+        key,
+    })
+}
+
+/// What PCSX2 hashes of the texture (`crate::texpack`): its 256-byte blocks as they lie in `memory` (the upload
+/// from the texture's first block), block row by block row, and the palette indices it uses. `None` for a texture
+/// smaller than one block (PSMT8 16 x 16, PSMT4 32 x 16), which PCSX2 hashes another way.
+fn texture_key(
+    memory: &[u8],
+    psm: u8,
+    tex0: &u64,
+    pages_wide: usize,
+    indices: &[u8],
+) -> Option<TextureKey> {
+    let tw = ((tex0 >> 26) & 0xf) as u8;
+    let th = ((tex0 >> 30) & 0xf) as u8;
+    let (width, height) = (1usize << tw, 1usize << th);
+    let (bw, bh) = if psm == PSM_T4 { (32, 16) } else { (16, 16) };
+    if width < bw || height < bh {
+        return None;
+    }
+    let mut blocks = Vec::with_capacity(width * height);
+    for y in (0..height).step_by(bh) {
+        for x in (0..width).step_by(bw) {
+            let byte = if psm == PSM_T4 {
+                psmt4_location(x, y, pages_wide).0
+            } else {
+                psmt8_location(x, y, pages_wide)
+            };
+            let start = byte & !0xFF;
+            blocks.extend_from_slice(memory.get(start..start + 256)?);
+        }
+    }
+    let lo = indices.iter().copied().min()?;
+    let hi = indices.iter().copied().max()?;
+    Some(TextureKey {
+        hash: crate::texpack::blocks_hash(&blocks),
+        psm,
+        tw,
+        th,
+        used: [lo, hi],
     })
 }
 
@@ -736,6 +798,64 @@ mod tests {
         assert_eq!(decoded.height, 128);
         assert_eq!(pixel_at(&decoded, 0, 0), [10, 30, 195, 255]);
         assert_eq!(pixel_at(&decoded, 0, 2), [20, 30, 190, 0]);
+    }
+
+    #[test]
+    fn a_texture_s_pack_key_hashes_its_gs_blocks_in_block_order() {
+        // One PSMCT32 page (64 x 32) read back as a 128 x 128 PSMT4 texture: its 32 blocks are the page's, visited
+        // row by row through the PSMT4 page's block arrangement (GS manual).
+        const PSMT4_BLOCKS: [[usize; 4]; 8] = [
+            [0, 2, 8, 10],
+            [1, 3, 9, 11],
+            [4, 6, 12, 14],
+            [5, 7, 13, 15],
+            [16, 18, 24, 26],
+            [17, 19, 25, 27],
+            [20, 22, 28, 30],
+            [21, 23, 29, 31],
+        ];
+        let pixel_image: Vec<u8> = (0..GS_PAGE_BYTES)
+            .map(|i| (i * 7 % 251) as u8 & 0x77)
+            .collect();
+        let palette_image: Vec<u8> = (0..64).map(|i| i as u8).collect();
+        let pixel_packet = image_packet(64, 32, &pixel_image);
+        let clut_packet = image_packet(8, 2, &palette_image);
+        let entry = |tw: u64, th: u64| TextureEntry {
+            pixel_data: Some(&pixel_packet),
+            clut_data: Some(&clut_packet),
+            pixel_size: pixel_packet.len() as i32,
+            clut_size: clut_packet.len() as i32,
+            pixel_blt: 1,
+            clut_blt: 0,
+            tbp_offset: 0,
+            cbp_offset: 0,
+            extra: [0; 8],
+            texture_register: (2 << 14) | (0x14 << 20) | (tw << 26) | (th << 30),
+        };
+        let mut memory = vec![0u8; GS_PAGE_BYTES];
+        for y in 0..PSMCT32_PAGE_HEIGHT {
+            for x in 0..PSMCT32_PAGE_WIDTH {
+                let source = (y * PSMCT32_PAGE_WIDTH + x) * 4;
+                let destination = psmct32_byte_offset(x, y);
+                memory[destination..destination + 4]
+                    .copy_from_slice(&pixel_image[source..source + 4]);
+            }
+        }
+        let blocks: Vec<u8> = PSMT4_BLOCKS
+            .iter()
+            .flatten()
+            .flat_map(|&b| memory[b * 256..b * 256 + 256].to_vec())
+            .collect();
+
+        let decoded = decode_sprite_texture(&entry(7, 7)).unwrap();
+        let name = decoded.pack.expect("a 128 x 128 texture has a name");
+        assert_eq!(name.texture, crate::texpack::blocks_hash(&blocks));
+        // Nibbles of bytes masked with 0x77 run 0..7.
+        assert_eq!(name.used, [0, 7]);
+        assert_eq!(name.bits, 0x14 | 7 << 6 | 7 << 10);
+        assert_eq!(name.alpha, crate::texpack::PackAlpha::Doubled);
+        // Smaller than one PSMT4 block (32 x 16): PCSX2 hashes it another way, so no name.
+        assert!(decode_sprite_texture(&entry(4, 4)).unwrap().pack.is_none());
     }
 
     fn image_packet(width: usize, height: usize, image: &[u8]) -> Vec<u8> {

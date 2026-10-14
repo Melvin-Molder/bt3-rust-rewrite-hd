@@ -25,6 +25,7 @@ use crate::battle::{AlphaWrite, ModelBatch, ModelLook};
 use crate::eft::{EffectBlend, EffectTri};
 use crate::hud::{HudBlend, HudPrim};
 use crate::stage_draw::StageBatch;
+use crate::texture_pack::TexturePack;
 use crate::{Game, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 const GS_MODEL_SHADER: Handle<Shader> = uuid_handle!("6f0b8f0e-4a8e-4c1e-9d55-2b6a1c3e9a71");
@@ -888,6 +889,7 @@ pub fn sync_effects(
     mut commands: Commands,
     game: Res<Game>,
     mut images: ResMut<Assets<Image>>,
+    pack: Res<TexturePack>,
     mut textures: ResMut<EffectTextures>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<GsEffectMaterial>>,
@@ -919,9 +921,8 @@ pub fn sync_effects(
         let texture = &game.effect_textures[i];
         // TEX1 0x60 bilinear, or point sampled.
         let point = game.effect_point.contains(&i);
-        let clamped = images.add(effect_image(texture, ImageAddressMode::ClampToEdge, point));
-        let wrapped = images.add(effect_image(texture, ImageAddressMode::Repeat, point));
-        textures.images.push([clamped, wrapped]);
+        let pair = effect_images(&pack, texture, point).map(|image| images.add(image));
+        textures.images.push(pair);
     }
     // Textures whose texels changed: written again in place, so the materials keep them.
     for &i in &game.effect_updates {
@@ -930,12 +931,9 @@ pub fn sync_effects(
             continue;
         };
         let point = game.effect_point.contains(&i);
-        for (handle, mode) in pair
-            .iter()
-            .zip([ImageAddressMode::ClampToEdge, ImageAddressMode::Repeat])
-        {
+        for (handle, new) in pair.iter().zip(effect_images(&pack, texture, point)) {
             if let Some(mut image) = images.get_mut(handle) {
-                *image = effect_image(texture, mode, point);
+                *image = new;
             }
         }
     }
@@ -947,6 +945,7 @@ pub fn sync_effects(
                     width: 1,
                     height: 1,
                     pixels: vec![0xFF; 4],
+                    pack: None,
                 },
                 ImageAddressMode::ClampToEdge,
             ))
@@ -1425,6 +1424,7 @@ pub fn sync_stage(
     mut commands: Commands,
     game: Res<Game>,
     mut images: ResMut<Assets<Image>>,
+    pack: Res<TexturePack>,
     mut textures: ResMut<StageTextures>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<GsStageMaterial>>,
@@ -1460,9 +1460,12 @@ pub fn sync_stage(
     while textures.images.len() < game.stage_textures.len() {
         let texture = &game.stage_textures[textures.images.len()];
         // CLAMP_1 0: wrapping.
-        textures
-            .images
-            .push(images.add(model_image(texture, ImageAddressMode::Repeat)));
+        textures.images.push(images.add(pack_or_model_image(
+            &pack,
+            texture,
+            ImageAddressMode::Repeat,
+            true,
+        )));
     }
     let mut material = |batch: &StageBatch, textures: &mut StageTextures| {
         let key = (batch.group, batch.order, batch.texture);
@@ -1602,6 +1605,7 @@ pub fn sync_hud(
     mut commands: Commands,
     game: Res<Game>,
     mut images: ResMut<Assets<Image>>,
+    pack: Res<TexturePack>,
     mut textures: ResMut<HudTextures>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<GsHudMaterial>>,
@@ -1639,7 +1643,7 @@ pub fn sync_hud(
         };
         textures
             .images
-            .push(images.add(model_image(texture, address)));
+            .push(images.add(pack_or_model_image(&pack, texture, address, false)));
     }
     let blank = textures
         .blank
@@ -1649,6 +1653,7 @@ pub fn sync_hud(
                     width: 1,
                     height: 1,
                     pixels: vec![0xFF; 4],
+                    pack: None,
                 },
                 ImageAddressMode::ClampToEdge,
             ))
@@ -1833,6 +1838,7 @@ pub fn sync_models(
     mut commands: Commands,
     game: Res<Game>,
     mut images: ResMut<Assets<Image>>,
+    pack: Res<TexturePack>,
     mut textures: ResMut<ModelTextures>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<GsModelMaterial>>,
@@ -1872,9 +1878,12 @@ pub fn sync_models(
     }
     while textures.base.len() < game.model_textures.0.len() {
         let texture = &game.model_textures.0[textures.base.len()];
-        textures
-            .base
-            .push(images.add(model_image(texture, ImageAddressMode::Repeat)));
+        textures.base.push(images.add(pack_or_model_image(
+            &pack,
+            texture,
+            ImageAddressMode::Repeat,
+            true,
+        )));
     }
     while textures.shade.len() < game.model_textures.1.len() {
         let texture = &game.model_textures.1[textures.shade.len()];
@@ -2017,6 +2026,32 @@ fn z_layers(batch: &ModelBatch) -> RenderLayers {
         RenderLayers::layer(EFFECT_LAYER)
     } else {
         RenderLayers::from_layers(&[FIGHTER_LAYER, EFFECT_LAYER])
+    }
+}
+
+/// A texture as `model_image` makes it, or the pack's replacement for it (`crate::texture_pack`), bilinear, with
+/// its smaller levels if `mips` (the 3D textures).
+fn pack_or_model_image(
+    pack: &TexturePack,
+    texture: &RgbaTexture,
+    address: ImageAddressMode,
+    mips: bool,
+) -> Image {
+    match pack.replacement(texture) {
+        Some(replacement) => replacement.image(TextureFormat::Rgba8Unorm, address, mips),
+        None => model_image(texture, address),
+    }
+}
+
+/// An effect texture clamped (CLAMP 5) and wrapping (the sorted pass's CLAMP 0): the pack's replacement (read
+/// once), or each as `effect_image` makes it.
+fn effect_images(pack: &TexturePack, texture: &RgbaTexture, point: bool) -> [Image; 2] {
+    let modes = [ImageAddressMode::ClampToEdge, ImageAddressMode::Repeat];
+    match pack.replacement(texture) {
+        Some(replacement) => {
+            modes.map(|address| replacement.image(TextureFormat::Rgba8Unorm, address, true))
+        }
+        None => modes.map(|address| effect_image(texture, address, point)),
     }
 }
 

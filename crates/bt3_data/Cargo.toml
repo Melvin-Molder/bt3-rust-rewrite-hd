@@ -10,3 +10,6 @@ name = "bt3_data"
 [[bin]]
 name = "bt3-inspect"
 path = "src/main.rs"
+
+[dependencies]
+twox-hash = { version = "2.1", default-features = false, features = ["xxhash3_64"] }

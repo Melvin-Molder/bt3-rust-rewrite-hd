@@ -472,6 +472,7 @@ pub fn load(
             width: 1,
             height: 1,
             pixels: vec![0; 4],
+            pack: None,
         }));
     }
     hud_sheets.push(icon_sheet);
@@ -740,6 +741,7 @@ pub fn load(
             width: crate::obj_shadow::PAGE as u32,
             height: crate::obj_shadow::PAGE as u32,
             pixels: vec![0; crate::obj_shadow::PAGE * crate::obj_shadow::PAGE * 4],
+            pack: None,
         });
     }
     // EftImpactMgr_Init: EftEmit_LoadSet of the common entries.
@@ -1234,6 +1236,7 @@ fn load_menu_sheet(file: &[u8], textures: &mut Vec<RgbaTexture>) -> std::io::Res
             width: 1,
             height: 1,
             pixels: vec![0; 4],
+            pack: None,
         }));
     }
     // The skill list's page tabs (entry 3) and page bar (entry 4) with the palettes of entries 0x26 + page.
@@ -1288,6 +1291,7 @@ fn load_hud(file: &[u8]) -> std::io::Result<(Vec<RgbaTexture>, Vec<HudSheet>, Hu
                 width: 1,
                 height: 1,
                 pixels: vec![0; 4],
+                pack: None,
             }));
             if index == 0 {
                 for sub in 0..=HUD_PALETTE_SUBS {
@@ -1397,6 +1401,35 @@ fn without_tcc<'a>(e: &bt3_data::tex::TextureEntry<'a>) -> bt3_data::tex::Textur
     bt3_data::tex::TextureEntry {
         texture_register: e.texture_register & !(1 << 34),
         ..*e
+    }
+}
+
+/// The names a pack gives a fighter's material texture: `BtlObjMdl_InitAlphaSlots` writes `slot + row * 15` into
+/// the alpha of the CLUT's first 16 entries before it is uploaded, the row the model's (`AlphaRows`, taken at run
+/// time), so its CLUT is hashed with each row's.
+fn alpha_slot_names(texture: &mut RgbaTexture, e: &bt3_data::tex::TextureEntry, slot: u8) {
+    let (Some(pack), Ok(t), Ok(offsets)) = (
+        &mut texture.pack,
+        bt3_data::gs::decode_indexed_texture(e),
+        bt3_data::gs::clut_entry_offsets(e),
+    ) else {
+        return;
+    };
+    for row in 0..15u8 {
+        let mut palette = t.palette.clone();
+        for (entry, &offset) in palette.iter_mut().zip(&offsets) {
+            if (0x60..0xA0).contains(&offset) {
+                entry[3] = slot.wrapping_add(row * 15);
+            }
+        }
+        pack.add_palette(&palette);
+    }
+}
+
+/// A texture drawn without alpha: a pack's replacement for it is made opaque too.
+fn opaque_pack(texture: &mut RgbaTexture) {
+    if let Some(pack) = &mut texture.pack {
+        pack.alpha = bt3_data::texpack::PackAlpha::Opaque;
     }
 }
 
@@ -1588,6 +1621,7 @@ pub(crate) fn id_texture(
         width: t.width,
         height: t.height,
         pixels,
+        pack: None,
     })
 }
 
@@ -1626,8 +1660,12 @@ fn bind_model_textures(
         for pixel in texture.pixels.chunks_exact_mut(4) {
             pixel[3] = 0xFF;
         }
+        opaque_pack(&mut texture);
         let slot = e.extra[4];
         let skip = header.tex_no_alpha != 0 && header.tex_no_alpha == i;
+        if !skip {
+            alpha_slot_names(&mut texture, e, slot);
+        }
         let a = if skip {
             0
         } else if e.extra[5] > 0x80 {
@@ -1662,6 +1700,7 @@ fn bind_model_textures(
             width: ramp.len() as u32,
             height: 1,
             pixels,
+            pack: None,
         });
     }
     let batch_textures = model
@@ -1791,6 +1830,7 @@ fn load_fighter(
         for pixel in texture.pixels.chunks_exact_mut(4) {
             pixel[3] = 0xFF;
         }
+        opaque_pack(&mut texture);
         assets.base_textures().push(texture);
         // ObjDraw_UploadTextures puts a face frame's own CLUT where the face texture's was.
         let ids = id_texture(e, None).map_err(error)?;
@@ -4278,6 +4318,7 @@ impl Battle {
                         width: crate::obj_shadow::PAGE as u32,
                         height: crate::obj_shadow::PAGE as u32,
                         pixels: crate::obj_shadow::render_page(&cams, obj.pos, shadow.light, tris),
+                        pack: None,
                     },
                 ));
             }

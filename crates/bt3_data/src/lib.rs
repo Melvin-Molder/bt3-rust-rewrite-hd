@@ -28,6 +28,7 @@ pub mod stage_model;
 pub mod stage_surf;
 pub mod survival;
 pub mod tex;
+pub mod texpack;
 
 const SECTOR_SIZE: u64 = 2048;
 const PRIMARY_VOLUME_DESCRIPTOR_LBA: u64 = 16;

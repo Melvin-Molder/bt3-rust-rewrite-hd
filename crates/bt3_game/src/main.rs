@@ -158,6 +158,7 @@ mod stg_tint;
 mod survival_result;
 mod survival_select;
 mod team_select;
+mod texture_pack;
 mod title;
 mod tour_bg;
 mod tour_menu;
@@ -643,6 +644,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut shot = None;
     let mut shot_at = 600;
     let mut display = display::DisplaySettings::default();
+    let mut texture_dir = None;
     let mut arguments = std::env::args_os().skip(1);
     while let Some(argument) = arguments.next() {
         if argument == "--title" {
@@ -688,6 +690,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .next()
                 .and_then(|v| display::DisplaySettings::parse_internal_scale(&v.to_string_lossy()))
                 .ok_or("--internal-scale requires 1 to 4")?;
+        } else if argument == "--textures" {
+            // An enhancement, off by default: textures replaced from a PCSX2 pack (crate::texture_pack).
+            texture_dir = Some(PathBuf::from(
+                arguments.next().ok_or("--textures requires a folder")?,
+            ));
         } else if argument == "--fps" {
             log_fps = true;
         } else if argument == "--shot" {
@@ -824,6 +831,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             width: movie::WIDTH,
             height: movie::HEIGHT,
             pixels: [0, 0, 0, 0xFF].repeat((movie::WIDTH * movie::HEIGHT) as usize),
+            pack: None,
         });
         textures.len() - 1
     });
@@ -884,6 +892,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         se::LoadedBank::parse(&read_file(&mut image, COMMON_SE_BANK_FILE_ID)?)?,
     );
 
+    let pack = match &texture_dir {
+        Some(dir) => {
+            let pack = texture_pack::TexturePack::open(dir)
+                .map_err(|e| format!("cannot read the texture pack {}: {e}", dir.display()))?;
+            info!("texture pack: {} files in {}", pack.len(), dir.display());
+            pack
+        }
+        None => texture_pack::TexturePack::default(),
+    };
     let mut app = App::new();
     app.insert_resource(ClearColor(Color::BLACK))
         .add_plugins(
@@ -1051,6 +1068,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .insert_resource(SeStream(engine))
         .insert_resource(display)
+        .insert_resource(pack)
         .add_audio_source::<se::SeOutput>()
         .init_resource::<Textures>()
         .add_systems(Startup, setup)
@@ -6107,6 +6125,7 @@ fn sync_quads(
     mut handles: ResMut<Textures>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    pack: Res<texture_pack::TexturePack>,
     mut slots: Query<(
         &QuadSlot,
         &Mesh2d,
@@ -6119,11 +6138,21 @@ fn sync_quads(
     }
     while handles.0.len() < game.textures.len() {
         let index = handles.0.len();
-        let image = texture_image(
-            &game.textures[index],
-            game.samplers[index],
-            game.movie_texture == Some(index),
-        );
+        let texture = &game.textures[index];
+        let movie = game.movie_texture == Some(index);
+        let replacement = (!movie).then(|| pack.replacement(texture)).flatten();
+        let image = match replacement {
+            // The screens' sheets: bilinear, their first level only.
+            Some(replacement) => replacement.image(
+                TextureFormat::Rgba8UnormSrgb,
+                match game.samplers[index] {
+                    Sampling::LinearRepeat => ImageAddressMode::Repeat,
+                    _ => ImageAddressMode::ClampToEdge,
+                },
+                false,
+            ),
+            None => texture_image(texture, game.samplers[index], movie),
+        };
         handles.0.push(images.add(image));
     }
     if let (Some(picture), Some(index)) = (game.picture.take(), game.movie_texture)

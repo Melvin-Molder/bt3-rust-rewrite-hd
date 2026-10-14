@@ -20,6 +20,7 @@
 !/crates/bt3_data/src/afs.rs
 !/crates/bt3_data/src/bpe.rs
 !/crates/bt3_data/src/tex.rs
+!/crates/bt3_data/src/texpack.rs
 !/crates/bt3_data/src/gs.rs
 !/crates/bt3_data/src/gsc.rs
 !/crates/bt3_data/src/stage.rs
@@ -83,6 +84,7 @@
 !/crates/bt3_game/src/disc.rs
 !/crates/bt3_game/src/disc_fusion.rs
 !/crates/bt3_game/src/display.rs
+!/crates/bt3_game/src/texture_pack.rs
 !/crates/bt3_game/src/mcflow.rs
 !/crates/bt3_game/src/anim.rs
 !/crates/bt3_game/src/windows.rs

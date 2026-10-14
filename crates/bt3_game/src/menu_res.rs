@@ -61,6 +61,7 @@ pub fn decode_file(data: &[u8]) -> Result<Vec<RgbaTexture>, Box<dyn Error>> {
                 width: 1,
                 height: 1,
                 pixels: vec![0; 4],
+                pack: None,
             }),
             Some(_) => decode_sprite_texture(e),
         })

@@ -60,6 +60,7 @@ scaled to the window, at 4:3 as a television shows it.
 | `--filter linear \| nearest` | Smooth (the default) or sharp scaling |
 | `--scale N` | The window's starting size, 1 to 8 (default 2) |
 | `--internal-scale N` | Optional enhancement, off by default: draw at N times 512 x 448 (2 to 4); 1 is the console's resolution |
+| `--textures DIR` | Optional enhancement, off by default: replace textures from a PCSX2 texture pack (its `SLUS-21678` folder) |
 | `--title`, `--menu` | Skip to the title screen or the main menu |
 | `--battle` | Go straight to a battle (`--stage N`, `--mode N`, `--split` for 2P) |
 | `--memcard DIR` | Use another save folder |
@@ -122,6 +123,8 @@ there. `cargo run -p bt3-data --bin bt3-inspect` prints what the reader finds on
   and game crates, and [hacktools](https://github.com/Illidanz/hacktools) (MIT) and
   [PS2Tek](https://israpps.github.io/ps2tek/PS2/GS/Textures.html) the texture formats. No code was copied from
   either.
+- [z3xox/Tenkaichi3Decomp](https://github.com/z3xox/Tenkaichi3Decomp) (MIT), a PC port of the game, worked out
+  how PCSX2 names this game's replacement textures; `--textures` follows that naming. No code was copied.
 - The rest of the format research is credited in [bt3-format-research.md](bt3-format-research.md).
 
 This project was made with the help of AI.

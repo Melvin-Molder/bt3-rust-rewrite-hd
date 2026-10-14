@@ -713,6 +713,7 @@ mod tests {
             height: 1,
             indices: vec![0, 1],
             palette: vec![[128, 128, 255, 0x80], [255, 128, 128, 0x80]],
+            key: None,
         };
         let param = SurfParam {
             color_a: [128.0, 128.0, 128.0, 128.0],
